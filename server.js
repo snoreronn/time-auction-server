@@ -23,6 +23,27 @@ let game = {
   roundData: null
 };
 
+function restartGame() {
+  // Reset all game state
+  game.phase = "lobby";
+  game.round = 0;
+  game.roundData = null;
+  
+  // Reset all players
+  Object.values(game.players).forEach(p => {
+    p.remainingMs = GAME_DURATION_MS;
+    p.tokens = 0;
+    p.holding = false;
+    p.holdStart = null;
+    p.bidMs = null;
+    p.tappedIn = false;
+  });
+  
+  // Broadcast the reset state to all clients
+  io.emit("game_restart");
+  io.emit("state", gamePublicState());
+}
+
 function createPlayer(id, name) {
   return {
     id,
@@ -170,6 +191,11 @@ app.get("/start", (_, res) => {
     startRound();
     res.send("Round started");
   } else res.send("Cannot start now");
+});
+
+app.get("/restart", (_, res) => {
+  restartGame();
+  res.send("Game restarted");
 });
 
 server.listen(3000, () => console.log("Time Auction server running on :3000"));
