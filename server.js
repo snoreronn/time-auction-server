@@ -43,6 +43,13 @@ io.on("connection", socket => {
     io.emit("state", gamePublicState());
   });
 
+  socket.on("host_start_round", () => {
+    // Only allow host (or first connected client) to start
+    if (game.phase === "lobby" || game.phase === "roundEnd") {
+      startRound();
+    }
+  });
+
   socket.on("tap_in", () => {
     if (game.players[socket.id]) {
       game.players[socket.id].tappedIn = true;
