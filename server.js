@@ -43,12 +43,26 @@ io.on("connection", socket => {
     io.emit("state", gamePublicState());
   });
 
+  const p = game.players[socket.id];
+
+  // Listen for host starting the round
   socket.on("host_start_round", () => {
-    // Only allow host (or first connected client) to start
+    // Only allow start if there is at least one player
+    const numPlayers = Object.keys(game.players).length;
+    if (numPlayers === 0) return;
+
+    // Only allow if phase is lobby or roundEnd
     if (game.phase === "lobby" || game.phase === "roundEnd") {
       startRound();
     }
   });
+
+  // Player join
+  socket.on("join", name => {
+    game.players[socket.id] = createPlayer(socket.id, name);
+    io.emit("state", gamePublicState());
+  });
+
 
   socket.on("tap_in", () => {
     if (game.players[socket.id]) {
