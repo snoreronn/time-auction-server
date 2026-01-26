@@ -138,6 +138,12 @@ io.on("connection", socket => {
     p.bidMs = playerEndTime - (game.roundData ? game.roundData.auctionStartsAt : 0);
     // Subtract the bid time from remaining time pool
     p.remainingMs = Math.max(0, p.remainingMs - p.bidMs);
+    
+    // Check if player hit 0 remaining time
+    if (p.remainingMs <= 0) {
+      io.to(socket.id).emit("time_expired");
+    }
+    
     io.emit("state", publicState());
     checkAuctionEnd();
   });
@@ -164,10 +170,38 @@ function startCountdown(){
 }
 
 // Auction phase starts automatically after the countdown ends
+let timeCheckInterval = null;
+
 function startAuction(){
   game.phase = "auction";
   io.emit("state", publicState());
   io.emit("auction_start");
+  
+  // Monitor players' remaining time during auction
+  // Check every 100ms for players hitting 0
+  timeCheckInterval = setInterval(() => {
+    if (game.phase !== "auction") {
+      clearInterval(timeCheckInterval);
+      return;
+    }
+    
+    Object.values(game.players).forEach(p => {
+      // If player is holding and time hits 0
+      if (p.holding && p.remainingMs <= 0) {
+        // Force end their hold
+        p.holding = false;
+        p.bidMs = game.roundData.auctionStartsAt 
+          ? Math.max(0, Date.now() - game.roundData.auctionStartsAt)
+          : 0;
+        p.remainingMs = 0;
+        
+        // Notify the player
+        io.to(p.socketId).emit("time_expired");
+        io.emit("state", publicState());
+        checkAuctionEnd();
+      }
+    });
+  }, 100);
 }
 
 function checkAuctionEnd(){
@@ -178,6 +212,12 @@ function checkAuctionEnd(){
 
 function endAuction(){
   game.phase = "roundEnd";
+  
+  // Clear the time check interval
+  if (timeCheckInterval) {
+    clearInterval(timeCheckInterval);
+    timeCheckInterval = null;
+  }
 
   const bids = Object.values(game.players)
     .filter(p => p.bidMs !== null)
