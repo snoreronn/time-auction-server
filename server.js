@@ -104,6 +104,12 @@ io.on("connection", socket => {
   socket.on("host_reset_for_round", () => {
     if(game.phase !== "startGame" && game.phase !== "roundEnd") return;
     game.phase = "startGame";
+    game.roundData = {};
+    Object.values(game.players).forEach(p=>{
+      p.tappedIn = false;
+      p.holding = false;
+      p.bidMs = null;
+    })
     io.emit("state", publicState());
     io.emit("reset_for_round")
   });
@@ -130,6 +136,8 @@ io.on("connection", socket => {
     if(!p || !p.holding) return;
     p.holding = false;
     p.bidMs = playerEndTime - (game.roundData ? game.roundData.auctionStartsAt : 0);
+    // Subtract the bid time from remaining time pool
+    p.remainingMs = Math.max(0, p.remainingMs - p.bidMs);
     io.emit("state", publicState());
     checkAuctionEnd();
   });
@@ -215,7 +223,7 @@ function publicState(showTimes=false){
       tokens: p.tokens,
       tappedIn: p.tappedIn,
       holding: p.holding,
-      remainingMs: showTimes ? p.remainingMs : null
+      remainingMs: p.remainingMs
     }))
   };
 }
