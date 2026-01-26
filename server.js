@@ -59,12 +59,19 @@ function createPlayer(id, name) {
 
 // ---- Socket Logic ----
 io.on("connection", socket => {
-  socket.on("join", name => {
-    game.players[socket.id] = createPlayer(socket.id, name);
+  socket.on("join", ({ id, name}) => {
+    // If player with same ID already exists, just update socket
+    if (game.players[id]) {
+      game.players[id].socketId = socket.id;
+      game.players[id].name = name; // optional update
+    } else {
+      // New player
+      game.players[id] = createPlayer(id, name);
+      game.players[id].socketId = socket.id;
+    }
+
     io.emit("state", gamePublicState());
   });
-
-  const p = game.players[socket.id];
 
   // Listen for host starting the round
   socket.on("host_start_round", () => {
@@ -78,22 +85,18 @@ io.on("connection", socket => {
     }
   });
 
-  // Player join
-  socket.on("join", name => {
-    game.players[socket.id] = createPlayer(socket.id, name);
-    io.emit("state", gamePublicState());
-  });
-
-
   socket.on("tap_in", () => {
-    if (game.players[socket.id]) {
-      game.players[socket.id].tappedIn = true;
+    const p = Object.values(game.players).find(p => p.socketId === socket.id);
+
+    if (p) {
+      p.tappedIn = true;
       io.emit("state", gamePublicState());
     }
   });
 
   socket.on("hold_start", () => {
-    const p = game.players[socket.id];
+    const p = Object.values(game.players).find(p => p.socketId === socket.id);
+
     if (!p || game.phase !== "auction") return;
     if (p.remainingMs <= 0) return;
     p.holding = true;
@@ -101,7 +104,8 @@ io.on("connection", socket => {
   });
 
   socket.on("hold_end", () => {
-    const p = game.players[socket.id];
+    const p = Object.values(game.players).find(p => p.socketId === socket.id);
+
     if (!p || !p.holding) return;
     const now = Date.now();
     let used = now - p.holdStart;
@@ -115,8 +119,11 @@ io.on("connection", socket => {
   });
 
   socket.on("disconnect", () => {
-    delete game.players[socket.id];
-    io.emit("state", gamePublicState());
+    const p = Object.values(game.players).find(p => p.socketId === socket.id);
+    if (p) {
+      p.socketId = null; // mark as temporarily disconnected
+      // do NOT delete player
+    }
   });
 });
 
