@@ -1,6 +1,7 @@
 // Time Auction MVP Server
 // Node.js + Express + Socket.IO
 
+// Time Auction Server – Multiplayer Persistent Holding
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -9,194 +10,162 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-const GAME_DURATION_MS = 10 * 60 * 1000;
+const GAME_DURATION_MS = 10 * 60 * 1000; // 10 minutes
 const COUNTDOWN_MS = 5000;
 
 let game = {
   phase: "lobby", // lobby | countdown | auction | roundEnd
   round: 0,
   totalRounds: 19,
-  players: {},
-  auctionStartAt: null
+  players: {}, // id -> player object
+  roundData: null
 };
 
-function now() {
-  return Date.now();
-}
-
-function createPlayer(id, name) {
+// ------------------ Player Factory ------------------
+function createPlayer(id, name, socketId){
   return {
     id,
     name,
-    socketId: null,
+    socketId,
     remainingMs: GAME_DURATION_MS,
     tokens: 0,
     tappedIn: false,
     holding: false,
-    holdStartedAt: null,
     bidMs: null
   };
 }
 
-function findPlayerBySocket(socketId) {
-  return Object.values(game.players).find(p => p.socketId === socketId);
-}
-
-// ---- SOCKETS ----
+// ------------------ Socket Logic ------------------
 io.on("connection", socket => {
-  socket.on("join", ({ id, name }) => {
-    if (!game.players[id]) {
-      game.players[id] = createPlayer(id, name);
+
+  socket.on("join", ({id, name}) => {
+    if(game.players[id]){
+      game.players[id].socketId = socket.id;
+      game.players[id].name = name;
+    } else {
+      game.players[id] = createPlayer(id,name,socket.id);
     }
-
-    game.players[id].socketId = socket.id;
-    io.emit("state", gamePublicState());
+    io.emit("state", publicState());
   });
 
-  socket.on("host_start_round", () => {
-    if (game.phase !== "lobby" && game.phase !== "roundEnd") return;
-    if (Object.keys(game.players).length === 0) return;
-    startRound();
-  });
-
+  // Player taps in → start holding automatically
   socket.on("tap_in", () => {
-    const player = findPlayerBySocket(socket.id);
-    if (!player || player.tappedIn) return;
+    const p = Object.values(game.players).find(p=>p.socketId===socket.id);
+    if(!p || p.tappedIn) return;
+    p.tappedIn = true;
+    p.holding = true;
 
-    player.tappedIn = true;
-    io.emit("state", gamePublicState());
+    io.emit("state", publicState());
 
-    // Check if ALL players tapped in
-    const allTapped = Object.values(game.players).every(p => p.tappedIn);
-    if (allTapped && game.phase === "countdown") {
-      // Start 5-second countdown
-      const COUNTDOWN_MS = 5000;
-      const endsAt = Date.now() + COUNTDOWN_MS;
-      game.phase = "countdownActive"; // temp phase
-
-      io.emit("countdown_start", { endsAt });
-
-      // After countdown, start auction
-      setTimeout(() => {
-        game.phase = "auction";
-        // reset hold info
-        Object.values(game.players).forEach(p => { p.holding = false; p.bidMs = null; });
-        io.emit("auction_start");
-        io.emit("state", gamePublicState());
-      }, COUNTDOWN_MS);
+    // If all players tapped in, start countdown
+    const allTapped = Object.values(game.players).length > 0 &&
+                       Object.values(game.players).every(p=>p.tappedIn);
+    if(allTapped && game.phase==="lobby"){
+      startCountdown();
     }
   });
 
   socket.on("hold_start", () => {
-    const p = findPlayerBySocket(socket.id);
-    if (!p || game.phase !== "auction" || !p.tappedIn) return;
-    if (p.holding) return;
-
+    const p = Object.values(game.players).find(p=>p.socketId===socket.id);
+    if(!p || !p.tappedIn) return;
     p.holding = true;
-    p.holdStartedAt = now();
+    io.emit("state", publicState());
   });
 
   socket.on("hold_end", () => {
-    const p = findPlayerBySocket(socket.id);
-    if (!p || !p.holding) return;
-
-    const elapsed = now() - p.holdStartedAt;
-    p.remainingMs = Math.max(0, p.remainingMs - elapsed);
-    p.bidMs = elapsed;
-
+    const p = Object.values(game.players).find(p=>p.socketId===socket.id);
+    if(!p || !p.holding) return;
     p.holding = false;
-    p.holdStartedAt = null;
-
+    io.emit("state", publicState());
     checkAuctionEnd();
   });
 
   socket.on("disconnect", () => {
-    const p = findPlayerBySocket(socket.id);
-    if (p) p.socketId = null;
+    const p = Object.values(game.players).find(p=>p.socketId===socket.id);
+    if(p) p.socketId = null; // temporary disconnect
   });
 });
 
-// ---- GAME FLOW ----
-function startRound() {
-  game.round++;
+// ------------------ Game Flow ------------------
+function startCountdown(){
   game.phase = "countdown";
+  const endsAt = Date.now() + COUNTDOWN_MS;
+  io.emit("countdown_start", { endsAt });
 
-  Object.values(game.players).forEach(p => {
-    p.tappedIn = false;
-    p.holding = false;
-    p.bidMs = null;
-  });
-
-  const countdownEndsAt = now() + COUNTDOWN_MS;
-  io.emit("countdown_start", { endsAt: countdownEndsAt });
-  io.emit("state", gamePublicState());
-
-  setTimeout(() => {
-    const players = Object.values(game.players);
-    if (!players.every(p => p.tappedIn)) {
-      game.phase = "lobby";
-      io.emit("round_aborted", { reason: "not_all_tapped_in" });
-      io.emit("state", gamePublicState());
-      return;
-    }
-
-    game.phase = "auction";
-    game.auctionStartAt = now();
-    io.emit("auction_start");
-    io.emit("state", gamePublicState());
+  setTimeout(()=>{
+    startAuction();
   }, COUNTDOWN_MS);
 }
 
-function checkAuctionEnd() {
-  const active = Object.values(game.players).some(p => p.holding);
-  if (!active) endAuction();
+function startAuction(){
+  game.phase = "auction";
+  io.emit("auction_start");
 }
 
-function endAuction() {
+function checkAuctionEnd(){
+  if(game.phase!=="auction") return;
+  const active = Object.values(game.players).filter(p=>p.holding);
+  if(active.length===0) endAuction();
+}
+
+function endAuction(){
   game.phase = "roundEnd";
 
   const bids = Object.values(game.players)
-    .filter(p => p.bidMs !== null)
-    .map(p => ({
-      id: p.id,
-      bid: Math.round(p.bidMs / 100) * 100
-    }))
-    .sort((a, b) => b.bid - a.bid);
+    .filter(p=>p.tappedIn)
+    .map(p=>({id:p.id,bid:p.bidMs||0}));
 
   let winner = null;
   let tie = false;
 
-  if (bids.length > 0) {
-    if (bids.length > 1 && bids[0].bid === bids[1].bid) {
-      tie = true;
-    } else {
-      winner = bids[0].id;
-      game.players[winner].tokens++;
-    }
+  if(bids.length>0){
+    bids.sort((a,b)=>b.bid-a.bid);
+    if(bids.length>1 && bids[0].bid === bids[1].bid) tie = true;
+    else winner = bids[0].id;
+    if(winner) game.players[winner].tokens += 1;
   }
 
   io.emit("round_result", {
     winner: winner ? game.players[winner].name : null,
     tie
   });
+  io.emit("state", publicState(true));
 
-  io.emit("state", gamePublicState(true));
+  // reset for next round
+  Object.values(game.players).forEach(p=>{
+    p.tappedIn = false;
+    p.holding = false;
+    p.bidMs = null;
+  });
 }
 
-function gamePublicState(showTimes = false) {
+// ------------------ Public State ------------------
+function publicState(showTimes=false){
   return {
     phase: game.phase,
     round: game.round,
-    players: Object.values(game.players).map(p => ({
+    players: Object.values(game.players).map(p=>({
       name: p.name,
       tokens: p.tokens,
-      remainingMs: showTimes ? p.remainingMs : null,
       tappedIn: p.tappedIn,
-      holding: p.holding
+      holding: p.holding,
+      remainingMs: showTimes ? p.remainingMs : null
     }))
   };
 }
 
-server.listen(3000, () =>
-  console.log("Time Auction server running on :3000")
-);
+// ------------------ REST for Host ------------------
+app.get("/restart", (_,res)=>{
+  Object.values(game.players).forEach(p=>{
+    p.tokens=0;
+    p.remainingMs=GAME_DURATION_MS;
+    p.tappedIn=false;
+    p.holding=false;
+  });
+  game.phase="lobby";
+  game.round=0;
+  io.emit("state", publicState());
+  res.send("Game reset");
+});
+
+server.listen(3000, ()=>console.log("Server running on :3000"));
