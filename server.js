@@ -19,27 +19,24 @@ let game = {
   phase: "lobby", // lobby | countdown | auction | roundEnd
   round: 0,
   totalRounds: 19,
-  players: {}, // socketId -> player
+  players: {}, // id -> player
   roundData: null
 };
 
 function restartGame() {
-  // Reset all game state
   game.phase = "lobby";
   game.round = 0;
   game.roundData = null;
-  
-  // Reset all players
+
   Object.values(game.players).forEach(p => {
     p.remainingMs = GAME_DURATION_MS;
     p.tokens = 0;
     p.holding = false;
-    p.holdStart = null;
+    p.holdStartAt = null;
     p.bidMs = null;
     p.tappedIn = false;
   });
-  
-  // Broadcast the reset state to all clients
+
   io.emit("game_restart");
   io.emit("state", gamePublicState());
 }
@@ -48,10 +45,11 @@ function createPlayer(id, name) {
   return {
     id,
     name,
+    socketId: null,
     remainingMs: GAME_DURATION_MS,
     tokens: 0,
     holding: false,
-    holdStart: null,
+    holdStartAt: null,
     bidMs: null,
     tappedIn: false
   };
@@ -59,71 +57,68 @@ function createPlayer(id, name) {
 
 // ---- Socket Logic ----
 io.on("connection", socket => {
-  socket.on("join", ({ id, name}) => {
-    // If player with same ID already exists, just update socket
-    if (game.players[id]) {
-      game.players[id].socketId = socket.id;
-      game.players[id].name = name; // optional update
-    } else {
-      // New player
+  socket.on("join", ({ id, name }) => {
+    if (!game.players[id]) {
       game.players[id] = createPlayer(id, name);
-      game.players[id].socketId = socket.id;
     }
+
+    game.players[id].socketId = socket.id;
+    game.players[id].name = name;
 
     io.emit("state", gamePublicState());
   });
 
-  // Listen for host starting the round
   socket.on("host_start_round", () => {
-    // Only allow start if there is at least one player
-    const numPlayers = Object.keys(game.players).length;
-    if (numPlayers === 0) return;
-
-    // Only allow if phase is lobby or roundEnd
-    if (game.phase === "lobby" || game.phase === "roundEnd") {
+    if (
+      Object.keys(game.players).length > 0 &&
+      (game.phase === "lobby" || game.phase === "roundEnd")
+    ) {
       startRound();
     }
   });
 
   socket.on("tap_in", () => {
-    const p = Object.values(game.players).find(p => p.socketId === socket.id);
+    const p = findPlayerBySocket(socket.id);
+    if (!p || game.phase !== "countdown") return;
 
-    if (p) {
-      p.tappedIn = true;
-      io.emit("state", gamePublicState());
+    p.tappedIn = true;
+    io.emit("state", gamePublicState());
+  });
+
+  socket.on("hold_start", ({ at }) => {
+    const p = findPlayerBySocket(socket.id);
+    if (!p || game.phase !== "auction" || !p.tappedIn) return;
+
+    if (!p.holding) {
+      p.holding = true;
+      p.holdStartAt = at;
     }
   });
 
-  socket.on("hold_start", () => {
-    const p = Object.values(game.players).find(p => p.socketId === socket.id);
-
-    if (!p || game.phase !== "auction") return;
-    if (p.remainingMs <= 0) return;
-    p.holding = true;
-    p.holdStart = Date.now();
-  });
-
-  socket.on("hold_end", () => {
-    const p = Object.values(game.players).find(p => p.socketId === socket.id);
-
+  socket.on("hold_end", ({ at }) => {
+    const p = findPlayerBySocket(socket.id);
     if (!p || !p.holding) return;
-    const now = Date.now();
-    let used = now - p.holdStart;
-    if (used > p.remainingMs) used = p.remainingMs;
-    p.remainingMs -= used;
-    p.bidMs = used;
+
     p.holding = false;
-    p.holdStart = null;
+    p.bidMs = at - p.holdStartAt;
+    p.holdStartAt = null;
 
     checkAuctionEnd();
   });
 
   socket.on("disconnect", () => {
-    const p = Object.values(game.players).find(p => p.socketId === socket.id);
-    if (p) {
-      p.socketId = null; // mark as temporarily disconnected
-      // do NOT delete player
+    const p = findPlayerBySocket(socket.id);
+    if (!p) return;
+
+    // Treat disconnect as letting go
+    if (p.holding && p.holdStartAt) {
+      p.bidMs = Date.now() - p.holdStartAt;
+      p.holding = false;
+      p.holdStartAt = null;
+      checkAuctionEnd();
     }
+
+    p.socketId = null;
   });
 });
 
@@ -135,10 +130,13 @@ function startRound() {
 
   Object.values(game.players).forEach(p => {
     p.tappedIn = false;
+    p.holding = false;
+    p.holdStartAt = null;
     p.bidMs = null;
   });
 
-  io.emit("countdown_start", COUNTDOWN_MS);
+  const endsAt = Date.now() + COUNTDOWN_MS;
+  io.emit("countdown_start", { endsAt });
 
   setTimeout(() => {
     game.phase = "auction";
@@ -147,8 +145,8 @@ function startRound() {
 }
 
 function checkAuctionEnd() {
-  const active = Object.values(game.players).filter(p => p.holding);
-  if (active.length === 0) endAuction();
+  const stillHolding = Object.values(game.players).some(p => p.holding);
+  if (!stillHolding) endAuction();
 }
 
 function endAuction() {
@@ -156,13 +154,17 @@ function endAuction() {
 
   const bids = Object.values(game.players)
     .filter(p => p.bidMs !== null)
-    .map(p => ({ id: p.id, bid: Math.round(p.bidMs / 100) * 100 }));
+    .map(p => ({
+      id: p.id,
+      bid: Math.round(p.bidMs / 100) * 100
+    }));
 
   let winner = null;
   let tie = false;
 
   if (bids.length > 0) {
     bids.sort((a, b) => b.bid - a.bid);
+
     if (bids.length > 1 && bids[0].bid === bids[1].bid) {
       tie = true;
     } else {
@@ -179,6 +181,10 @@ function endAuction() {
   io.emit("state", gamePublicState(true));
 }
 
+function findPlayerBySocket(socketId) {
+  return Object.values(game.players).find(p => p.socketId === socketId);
+}
+
 function gamePublicState(showTimes = false) {
   return {
     phase: game.phase,
@@ -187,17 +193,20 @@ function gamePublicState(showTimes = false) {
       name: p.name,
       tokens: p.tokens,
       remainingMs: showTimes ? p.remainingMs : null,
-      tappedIn: p.tappedIn
+      tappedIn: p.tappedIn,
+      holding: p.holding
     }))
   };
 }
 
-// ---- Host Controls (temporary REST) ----
+// ---- Host Controls ----
 app.get("/start", (_, res) => {
   if (game.phase === "lobby" || game.phase === "roundEnd") {
     startRound();
     res.send("Round started");
-  } else res.send("Cannot start now");
+  } else {
+    res.send("Cannot start now");
+  }
 });
 
 app.get("/restart", (_, res) => {
@@ -205,4 +214,6 @@ app.get("/restart", (_, res) => {
   res.send("Game restarted");
 });
 
-server.listen(3000, () => console.log("Time Auction server running on :3000"));
+server.listen(3000, () =>
+  console.log("Time Auction server running on :3000")
+);
