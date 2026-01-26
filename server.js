@@ -156,12 +156,7 @@ function publicState(showTimes=false){
 
 // ------------------ REST for Host ------------------
 app.get("/restart", (_,res)=>{
-  Object.values(game.players).forEach(p=>{
-    p.tokens=0;
-    p.remainingMs=GAME_DURATION_MS;
-    p.tappedIn=false;
-    p.holding=false;
-  });
+  game.players = {};
   game.phase="lobby";
   game.round=0;
   io.emit("state", publicState());
