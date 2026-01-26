@@ -10,7 +10,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-const GAME_DURATION_MS = 10 * 60 * 1000; // 10 minutes
+const GAME_DURATION_MS = 2000; // 10 * 60 * 1000; // 10 minutes
 const COUNTDOWN_MS = 5000;
 
 let game = {
@@ -219,6 +219,7 @@ function publicState(showTimes=false){
     phase: game.phase,
     round: game.round,
     players: Object.values(game.players).map(p=>({
+      id: p.id,
       name: p.name,
       tokens: p.tokens,
       tappedIn: p.tappedIn,
