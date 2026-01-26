@@ -25,7 +25,7 @@ let game = {
   round: 0,
   totalRounds: 19,
   players: {}, // id -> player object
-  roundData: null
+  roundData: {}
 };
 
 // ------------------ Player Factory ------------------
