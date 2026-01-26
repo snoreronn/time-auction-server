@@ -76,7 +76,7 @@ io.on("connection", socket => {
     io.emit("state", publicState());
 
     // If all players tapped in, start countdown
-    if(allTapped() && game.phase==="lobby"){
+    if(allTapped() && game.phase==="startGame"){
       game.phase = "playersReady";
       io.emit("state", publicState());
       // startCountdown();
