@@ -10,8 +10,11 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-const GAME_DURATION_MS = 10 * 60 * 1000; // 10 minutes
-const COUNTDOWN_MS = 5000;
+// Configuration from environment variables
+const GAME_DURATION_MINUTES = parseFloat(process.env.GAME_DURATION_MINUTES || "10"); // 10 minutes default
+const GAME_DURATION_MS = Math.round(GAME_DURATION_MINUTES * 60 * 1000);
+const COUNTDOWN_MS = parseInt(process.env.COUNTDOWN_MS || "5000"); // 5 seconds default
+const TOTAL_ROUNDS = parseInt(process.env.TOTAL_ROUNDS || "19"); // 19 rounds default
 
 let game = {
   // Definition of game phases
@@ -23,7 +26,7 @@ let game = {
   //  roundEnd: auction ended, showing results [Triggered by last player releasing hold]
   phase: "lobby",
   round: 0,
-  totalRounds: 19,
+  totalRounds: TOTAL_ROUNDS,
   players: {}, // id -> player object
   roundData: {}
 };
