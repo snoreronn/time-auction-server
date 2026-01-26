@@ -145,6 +145,7 @@ io.on("connection", socket => {
 function startCountdown(){
   game.phase = "countdown";
   auctionStartsAt = Date.now() + COUNTDOWN_MS;
+  io.emit("state", publicState());
   io.emit("countdown_start", { auctionStartsAt });
 
   setTimeout(()=>{
@@ -157,6 +158,7 @@ function startCountdown(){
 // Auction phase starts automatically after the countdown ends
 function startAuction(){
   game.phase = "auction";
+  io.emit("state", publicState());
   io.emit("auction_start");
 }
 
