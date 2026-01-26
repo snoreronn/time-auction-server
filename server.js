@@ -21,7 +21,7 @@ let game = {
   //  countdown: countdown before auction starts [Requires Host to Start Round]
   //  auction: players can hold to bid 
   //  roundEnd: auction ended, showing results [Triggered by last player releasing hold]
-  phase: "lobby", // lobby | readyToStart | countdown | auction | roundEnd
+  phase: "lobby",
   round: 0,
   totalRounds: 19,
   players: {}, // id -> player object
@@ -81,6 +81,15 @@ io.on("connection", socket => {
       io.emit("state", publicState());
       // startCountdown();
     }
+  });
+
+  // Player taps out → untap and stop holding
+  socket.on("tap_out", () => {
+    const p = findPlayerBySocketId(socket.id);
+    if(!p) return;
+    p.tappedIn = false;
+    p.holding = false;
+    io.emit("state", publicState());
   });
 
   // Host starts the game → no more players can join
@@ -161,17 +170,20 @@ function endAuction(){
   game.phase = "roundEnd";
 
   const bids = Object.values(game.players)
-    .filter(p=>p.tappedIn)
-    .map(p=>({id:p.id,bid:p.bidMs||0}));
+    .filter(p => p.bidMs !== null)
+    .map(p => ({ id: p.id, bid: Math.round(p.bidMs / 100) * 100 }));
 
   let winner = null;
   let tie = false;
 
-  if(bids.length>0){
-    bids.sort((a,b)=>b.bid-a.bid);
-    if(bids.length>1 && bids[0].bid === bids[1].bid) tie = true;
-    else winner = bids[0].id;
-    if(winner) game.players[winner].tokens += 1;
+  if (bids.length > 0) {
+    bids.sort((a, b) => b.bid - a.bid);
+    if (bids.length > 1 && bids[0].bid === bids[1].bid) {
+      tie = true;
+    } else {
+      winner = bids[0].id;
+      game.players[winner].tokens += 1;
+    }
   }
 
   io.emit("round_result", {
