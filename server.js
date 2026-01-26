@@ -60,12 +60,31 @@ io.on("connection", socket => {
   });
 
   socket.on("tap_in", () => {
-    if (game.phase !== "countdown") return;
-    const p = findPlayerBySocket(socket.id);
-    if (!p) return;
+    const player = findPlayerBySocket(socket.id);
+    if (!player || player.tappedIn) return;
 
-    p.tappedIn = true;
+    player.tappedIn = true;
     io.emit("state", gamePublicState());
+
+    // Check if ALL players tapped in
+    const allTapped = Object.values(game.players).every(p => p.tappedIn);
+    if (allTapped && game.phase === "countdown") {
+      // Start 5-second countdown
+      const COUNTDOWN_MS = 5000;
+      const endsAt = Date.now() + COUNTDOWN_MS;
+      game.phase = "countdownActive"; // temp phase
+
+      io.emit("countdown_start", { endsAt });
+
+      // After countdown, start auction
+      setTimeout(() => {
+        game.phase = "auction";
+        // reset hold info
+        Object.values(game.players).forEach(p => { p.holding = false; p.bidMs = null; });
+        io.emit("auction_start");
+        io.emit("state", gamePublicState());
+      }, COUNTDOWN_MS);
+    }
   });
 
   socket.on("hold_start", () => {
