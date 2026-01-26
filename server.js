@@ -236,11 +236,13 @@ function endAuction(){
     }
   }
 
+  // Emit updated state first (with tokens incremented)
+  io.emit("state", publicState(true));
+  
   io.emit("round_result", {
     winner: winner ? game.players[winner].name : null,
     tie
   });
-  io.emit("state", publicState(true));
 
   // reset for next round
   Object.values(game.players).forEach(p=>{
