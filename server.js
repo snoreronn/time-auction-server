@@ -175,7 +175,7 @@ let timeCheckInterval = null;
 function startAuction(){
   game.phase = "auction";
   io.emit("state", publicState());
-  io.emit("auction_start");
+  io.emit("auction_start", { auctionStartsAt: game.roundData.auctionStartsAt });
   
   // Monitor players' remaining time during auction
   // Check every 100ms for players hitting 0
