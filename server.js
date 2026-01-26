@@ -16,12 +16,11 @@ const COUNTDOWN_MS = 5000;
 let game = {
   // Definition of game phases
   //  lobby: waiting for players to join
-  //  playersLocked: host has started the game, players can no longer join
-  //  readyToStart: all players tapped in, waiting for host to start round
-  //  countdown: countdown before auction starts
-  //  auction: players can hold to bid
-  //  roundEnd: auction ended, showing results
-  
+  //  startGame: host has started the game, players can no longer join [Requires Host Button]
+  //  playersReady: all players tapped in, waiting for host to start round [Players all Tap In]
+  //  countdown: countdown before auction starts [Requires Host to Start Round]
+  //  auction: players can hold to bid 
+  //  roundEnd: auction ended, showing results [Triggered by last player releasing hold]
   phase: "lobby", // lobby | readyToStart | countdown | auction | roundEnd
   round: 0,
   totalRounds: 19,
@@ -78,24 +77,37 @@ io.on("connection", socket => {
 
     // If all players tapped in, start countdown
     if(allTapped() && game.phase==="lobby"){
-      game.phase = "readyToStart";
+      game.phase = "playersReady";
       io.emit("state", publicState());
       // startCountdown();
     }
   });
 
+  // Host starts the game → no more players can join
   socket.on("host_start_game", () => {
     if(game.phase !== "lobby") return;
-    game.phase = "playersLocked";
+    game.phase = "startGame";
     io.emit("state", publicState());
   });
 
+  // Host indicates all players are ready for the round
+  // Resets player states for the new round
+  socket.on("host_reset_for_round", () => {
+    if(game.phase !== "startGame" && game.phase !== "roundEnd") return;
+    game.phase = "startGame";
+    io.emit("state", publicState());
+    io.emit("reset_for_round")
+  });
+
+  // Host starts the round → countdown begins
+  // Requires all players to be tapped in
   socket.on("host_start_round", () => {
     if(game.phase !== "readyToStart") return;
     game.round += 1;
     startCountdown();
   });
 
+  // Player starts holding to bid time
   socket.on("hold_start", () => {
     const p = findPlayerBySocketId(socket.id);
     if(!p || !p.tappedIn) return;
@@ -103,10 +115,12 @@ io.on("connection", socket => {
     io.emit("state", publicState());
   });
 
-  socket.on("hold_end", () => {
+  // Player stops holding
+  socket.on("hold_end", ( playerEndTime ) => {
     const p = findPlayerBySocketId(socket.id);
     if(!p || !p.holding) return;
     p.holding = false;
+    p.bidMs = playerEndTime - (game.roundData ? game.roundData.auctionStartsAt : 0);
     io.emit("state", publicState());
     checkAuctionEnd();
   });
@@ -118,16 +132,20 @@ io.on("connection", socket => {
 });
 
 // ------------------ Game Flow ------------------
+// Countdown is triggered by Host "Start Round" button
 function startCountdown(){
   game.phase = "countdown";
-  const endsAt = Date.now() + COUNTDOWN_MS;
-  io.emit("countdown_start", { endsAt });
+  auctionStartsAt = Date.now() + COUNTDOWN_MS;
+  io.emit("countdown_start", { auctionStartsAt });
 
   setTimeout(()=>{
     startAuction();
   }, COUNTDOWN_MS);
+
+  game.roundData.auctionStartsAt = auctionStartsAt;
 }
 
+// Auction phase starts automatically after the countdown ends
 function startAuction(){
   game.phase = "auction";
   io.emit("auction_start");
@@ -168,6 +186,9 @@ function endAuction(){
     p.holding = false;
     p.bidMs = null;
   });
+
+  // Ready for the next round
+  game.phase = "playersLocked";
 }
 
 // ------------------ Public State ------------------
