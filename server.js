@@ -14,6 +14,14 @@ const GAME_DURATION_MS = 10 * 60 * 1000; // 10 minutes
 const COUNTDOWN_MS = 5000;
 
 let game = {
+  // Definition of game phases
+  //  lobby: waiting for players to join
+  //  playersLocked: host has started the game, players can no longer join
+  //  readyToStart: all players tapped in, waiting for host to start round
+  //  countdown: countdown before auction starts
+  //  auction: players can hold to bid
+  //  roundEnd: auction ended, showing results
+  
   phase: "lobby", // lobby | readyToStart | countdown | auction | roundEnd
   round: 0,
   totalRounds: 19,
@@ -77,7 +85,14 @@ io.on("connection", socket => {
   });
 
   socket.on("host_start_game", () => {
+    if(game.phase !== "lobby") return;
+    game.phase = "playersLocked";
+    io.emit("state", publicState());
+  });
+
+  socket.on("host_start_round", () => {
     if(game.phase !== "readyToStart") return;
+    game.round += 1;
     startCountdown();
   });
 
