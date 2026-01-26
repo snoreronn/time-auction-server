@@ -111,7 +111,7 @@ io.on("connection", socket => {
   // Host starts the round → countdown begins
   // Requires all players to be tapped in
   socket.on("host_start_round", () => {
-    if(game.phase !== "readyToStart") return;
+    if(game.phase !== "playersReady") return;
     game.round += 1;
     startCountdown();
   });
@@ -200,7 +200,7 @@ function endAuction(){
   });
 
   // Ready for the next round
-  game.phase = "playersLocked";
+  game.phase = "startGame";
 }
 
 // ------------------ Public State ------------------
