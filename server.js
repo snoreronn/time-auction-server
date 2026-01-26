@@ -14,7 +14,7 @@ const GAME_DURATION_MS = 10 * 60 * 1000; // 10 minutes
 const COUNTDOWN_MS = 5000;
 
 let game = {
-  phase: "lobby", // lobby | countdown | auction | roundEnd
+  phase: "lobby", // lobby | readyToStart | countdown | auction | roundEnd
   round: 0,
   totalRounds: 19,
   players: {}, // id -> player object
@@ -35,6 +35,17 @@ function createPlayer(id, name, socketId){
   };
 }
 
+// ------------------ Find Player by SocketId ------------------
+function findPlayerBySocketId(socketId){
+  return Object.values(game.players).find(p=>p.socketId===socketId);
+}
+
+// ------------------ Determine if all Players are Ready ------------------
+function allTapped() {
+  return Object.values(game.players).length > 0 &&
+          Object.values(game.players).every(p=>p.tappedIn);
+}
+
 // ------------------ Socket Logic ------------------
 io.on("connection", socket => {
 
@@ -50,7 +61,7 @@ io.on("connection", socket => {
 
   // Player taps in → start holding automatically
   socket.on("tap_in", () => {
-    const p = Object.values(game.players).find(p=>p.socketId===socket.id);
+    const p = findPlayerBySocketId(socket.id);
     if(!p || p.tappedIn) return;
     p.tappedIn = true;
     p.holding = true;
@@ -58,22 +69,27 @@ io.on("connection", socket => {
     io.emit("state", publicState());
 
     // If all players tapped in, start countdown
-    const allTapped = Object.values(game.players).length > 0 &&
-                       Object.values(game.players).every(p=>p.tappedIn);
-    if(allTapped && game.phase==="lobby"){
-      startCountdown();
+    if(allTapped() && game.phase==="lobby"){
+      game.phase = "readyToStart";
+      io.emit("state", publicState());
+      // startCountdown();
     }
   });
 
+  socket.on("host_start_game", () => {
+    if(game.phase !== "readyToStart") return;
+    startCountdown();
+  });
+
   socket.on("hold_start", () => {
-    const p = Object.values(game.players).find(p=>p.socketId===socket.id);
+    const p = findPlayerBySocketId(socket.id);
     if(!p || !p.tappedIn) return;
     p.holding = true;
     io.emit("state", publicState());
   });
 
   socket.on("hold_end", () => {
-    const p = Object.values(game.players).find(p=>p.socketId===socket.id);
+    const p = findPlayerBySocketId(socket.id);
     if(!p || !p.holding) return;
     p.holding = false;
     io.emit("state", publicState());
@@ -81,7 +97,7 @@ io.on("connection", socket => {
   });
 
   socket.on("disconnect", () => {
-    const p = Object.values(game.players).find(p=>p.socketId===socket.id);
+    const p = findPlayerBySocketId(socket.id);
     if(p) p.socketId = null; // temporary disconnect
   });
 });
