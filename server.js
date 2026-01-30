@@ -41,7 +41,8 @@ function createPlayer(id, name, socketId){
     tokens: 0,
     tappedIn: false,
     holding: false,
-    bidMs: null
+    bidMs: null,
+    locked: false // Used to prevent players from joining when the auction has started
   };
 }
 
@@ -112,6 +113,7 @@ io.on("connection", socket => {
       p.tappedIn = false;
       p.holding = false;
       p.bidMs = null;
+      p.locked = false;
     })
     io.emit("state", publicState());
     io.emit("reset_for_round")
@@ -129,6 +131,10 @@ io.on("connection", socket => {
   socket.on("hold_start", () => {
     const p = findPlayerBySocketId(socket.id);
     if(!p || !p.tappedIn) return;
+
+    // 🚫 Cannot join after auction start
+    if (game.phase === "auction" && p.locked) return;
+
     p.holding = true;
     io.emit("state", publicState());
   });
@@ -177,28 +183,32 @@ let timeCheckInterval = null;
 
 function startAuction(){
   game.phase = "auction";
+
+  const auctionStart = game.roundData.auctionStartsAt;
+
+  // 🔒 Lock players who were NOT holding at auction start
+  Object.values(game.players).forEach(p => {
+    if (!p.holding) {
+      p.locked = true;
+      p.bidMs = 0; // locked using auction start time
+    }
+  });
+
   io.emit("state", publicState());
-  io.emit("auction_start", { auctionStartsAt: game.roundData.auctionStartsAt });
-  
-  // Monitor players' remaining time during auction
-  // Check every 100ms for players hitting 0
+  io.emit("auction_start", { auctionStartsAt: auctionStart });
+
+  // existing interval logic stays the same
   timeCheckInterval = setInterval(() => {
     if (game.phase !== "auction") {
       clearInterval(timeCheckInterval);
       return;
     }
-    
+
     Object.values(game.players).forEach(p => {
-      // If player is holding and time hits 0
       if (p.holding && p.remainingMs <= 0) {
-        // Force end their hold
         p.holding = false;
-        p.bidMs = game.roundData.auctionStartsAt 
-          ? Math.max(0, Date.now() - game.roundData.auctionStartsAt)
-          : 0;
+        p.bidMs = Math.max(0, Date.now() - auctionStart);
         p.remainingMs = 0;
-        
-        // Notify the player
         io.to(p.socketId).emit("time_expired");
         io.emit("state", publicState());
         checkAuctionEnd();
@@ -252,6 +262,7 @@ function endAuction(){
     p.tappedIn = false;
     p.holding = false;
     p.bidMs = null;
+    p.locked = false;
   });
 
   // Ready for the next round
