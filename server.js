@@ -42,7 +42,7 @@ function createPlayer(id, name, socketId){
     tappedIn: false,
     holding: false,
     bidMs: null,
-    locked: false // Used to prevent players from joining when the auction has started
+    holdingAtAuctionStart: false // Used to prevent players from joining when the auction has started
   };
 }
 
@@ -74,6 +74,10 @@ io.on("connection", socket => {
   socket.on("tap_in", () => {
     const p = findPlayerBySocketId(socket.id);
     if(!p || p.tappedIn) return;
+
+    // 🚫 Cannot tap in once countdown has completed
+    if (game.phase === "auction") return;
+
     p.tappedIn = true;
     p.holding = true;
 
@@ -113,7 +117,7 @@ io.on("connection", socket => {
       p.tappedIn = false;
       p.holding = false;
       p.bidMs = null;
-      p.locked = false;
+      p.holdingAtAuctionStart = false;
     })
     io.emit("state", publicState());
     io.emit("reset_for_round")
@@ -133,7 +137,12 @@ io.on("connection", socket => {
     if(!p || !p.tappedIn) return;
 
     // 🚫 Cannot join after auction start
-    if (game.phase === "auction" && p.locked) return;
+    // ❌ Countdown finished — cannot newly start holding
+    if ( game.phase === "auction" && !p.holdingAtAuctionStart ) {
+
+          io.to(socket.id).emit("locked_out");
+          return;
+    }
 
     p.holding = true;
     io.emit("state", publicState());
@@ -186,16 +195,34 @@ function startAuction(){
 
   const auctionStart = game.roundData.auctionStartsAt;
 
+  let activeAtStart = 0;
+
   // 🔒 Lock players who were NOT holding at auction start
   Object.values(game.players).forEach(p => {
-    if (!p.holding) {
-      p.locked = true;
+    // Snapshot holding state
+    p.holdingAtAuctionStart = p.holding;
+
+    if (p.holdingAtAuctionStart) {
+      activeAtStart += 1;
+    } else {
+      p.holding = false;
       p.bidMs = 0; // locked using auction start time
+
+      if (p.socketId) {
+        io.to(p.socketId).emit("locked_out");
+      }
     }
   });
 
   io.emit("state", publicState());
   io.emit("auction_start", { auctionStartsAt: auctionStart });
+
+  // If nobody is holding at the start of the auction, end immediately
+  if (activeAtStart === 0)
+  {
+    endAuction();
+    return;
+  }
 
   // existing interval logic stays the same
   timeCheckInterval = setInterval(() => {
@@ -262,7 +289,7 @@ function endAuction(){
     p.tappedIn = false;
     p.holding = false;
     p.bidMs = null;
-    p.locked = false;
+    p.holdingAtAuctionStart = false;
   });
 
   // Ready for the next round
