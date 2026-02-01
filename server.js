@@ -215,6 +215,7 @@ io.on("connection", socket => {
     const p = findPlayerBySocketId(socket.id);
     if(p) {
       delete game.players[p.id];
+      // Broadcast updated state to all clients immediately
       io.emit("state", publicState());
     }
   });
