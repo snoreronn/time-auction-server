@@ -146,6 +146,7 @@ io.on("connection", socket => {
   // Resets player states for the new round
   socket.on("host_reset_for_round", () => {
     if(game.phase !== "startGame" && game.phase !== "roundEnd") return;
+    if (game.round >= game.totalRounds) return;
     game.phase = "startGame";
     game.roundData = {};
     Object.values(game.players).forEach(p=>{
@@ -162,6 +163,7 @@ io.on("connection", socket => {
   // Requires all players to be tapped in
   socket.on("host_start_round", () => {
     if(game.phase !== "playersReady") return;
+    if (game.round >= game.totalRounds) return;
     game.round += 1;
     startCountdown();
   });
@@ -336,8 +338,8 @@ function endAuction(){
     p.holdingAtAuctionStart = false;
   });
 
-  // Ready for the next round
-  game.phase = "startGame";
+  // Ready for the next round if any remain
+  game.phase = game.round >= game.totalRounds ? "roundEnd" : "startGame";
 }
 
 // ------------------ Public State ------------------
