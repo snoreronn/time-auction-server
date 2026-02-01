@@ -195,7 +195,14 @@ io.on("connection", socket => {
     const p = findPlayerBySocketId(socket.id);
     if(!p || !p.holding) return;
     p.holding = false;
-    p.bidMs = playerEndTime - (game.roundData ? game.roundData.auctionStartsAt : 0);
+    
+    // Only count bid time if during auction phase
+    if (game.phase === "auction" && game.roundData && game.roundData.auctionStartsAt) {
+      p.bidMs = playerEndTime - game.roundData.auctionStartsAt;
+    } else {
+      p.bidMs = 0;
+    }
+    
     // Subtract the bid time from remaining time pool
     p.remainingMs = Math.max(0, p.remainingMs - p.bidMs);
     
