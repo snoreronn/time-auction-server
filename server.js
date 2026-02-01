@@ -208,6 +208,17 @@ io.on("connection", socket => {
     checkAuctionEnd();
   });
 
+  socket.on("player_leave", () => {
+    // Only allow leaving during lobby phase
+    if (game.phase !== "lobby") return;
+
+    const p = findPlayerBySocketId(socket.id);
+    if(p) {
+      delete game.players[p.id];
+      io.emit("state", publicState());
+    }
+  });
+
   socket.on("disconnect", () => {
     const p = findPlayerBySocketId(socket.id);
     if(p) p.socketId = null; // temporary disconnect
