@@ -71,6 +71,11 @@ function allTapped() {
 io.on("connection", socket => {
 
   socket.on("join", ({id, name}) => {
+    const isNewPlayer = !game.players[id];
+    
+    // Only allow new players to join during lobby phase
+    if (isNewPlayer && game.phase !== "lobby") return;
+
     if(game.players[id]){
       game.players[id].socketId = socket.id;
       game.players[id].name = name;
