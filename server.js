@@ -12,7 +12,7 @@ const io = new Server(server, { cors: { origin: "*" } });
 
 // Configuration from environment variables
 const GAME_DURATION_MINUTES = parseFloat(process.env.GAME_DURATION_MINUTES || "10"); // 10 minutes default
-const GAME_DURATION_MS = Math.round(GAME_DURATION_MINUTES * 60 * 1000);
+// const GAME_DURATION_MS = Math.round(GAME_DURATION_MINUTES * 60 * 1000);
 const COUNTDOWN_MS = parseInt(process.env.COUNTDOWN_MS || "5000"); // 5 seconds default
 const TOTAL_ROUNDS = parseInt(process.env.TOTAL_ROUNDS || "19"); // 19 rounds default
 
@@ -27,9 +27,19 @@ let game = {
   phase: "lobby",
   round: 0,
   totalRounds: TOTAL_ROUNDS,
+  settings: {
+    totalRounds: TOTAL_ROUNDS,
+    gameDurationMinutes: GAME_DURATION_MINUTES
+  },
   players: {}, // id -> player object
   roundData: {}
 };
+
+function resolveDurationMs() {
+  const minutes = parseFloat(game.settings?.gameDurationMinutes || GAME_DURATION_MINUTES);
+  const safeMinutes = Number.isFinite(minutes) && minutes > 0 ? minutes : GAME_DURATION_MINUTES;
+  return Math.round(safeMinutes * 60 * 1000);
+}
 
 // ------------------ Player Factory ------------------
 function createPlayer(id, name, socketId){
@@ -37,7 +47,7 @@ function createPlayer(id, name, socketId){
     id,
     name,
     socketId,
-    remainingMs: GAME_DURATION_MS,
+    remainingMs: resolveDurationMs(),
     tokens: 0,
     tappedIn: false,
     holding: false,
@@ -104,6 +114,31 @@ io.on("connection", socket => {
   socket.on("host_start_game", () => {
     if(game.phase !== "lobby") return;
     game.phase = "startGame";
+    io.emit("state", publicState());
+  });
+
+  // Host updates game settings (rounds + minutes)
+  socket.on("host_update_settings", ({ totalRounds, gameDurationMinutes }) => {
+    if (game.phase !== "lobby") return;
+
+    const parsedRounds = parseInt(totalRounds, 10);
+    const parsedMinutes = parseFloat(gameDurationMinutes);
+
+    const safeRounds = Number.isFinite(parsedRounds) && parsedRounds > 0 ? parsedRounds : TOTAL_ROUNDS;
+    const safeMinutes = Number.isFinite(parsedMinutes) && parsedMinutes > 0 ? parsedMinutes : GAME_DURATION_MINUTES;
+
+    game.settings.totalRounds = safeRounds;
+    game.settings.gameDurationMinutes = safeMinutes;
+    game.totalRounds = safeRounds;
+
+    // Apply new duration to all players if the game hasn't started a round yet
+    if (game.round === 0) {
+      const newDurationMs = resolveDurationMs();
+      Object.values(game.players).forEach(p => {
+        p.remainingMs = newDurationMs;
+      });
+    }
+
     io.emit("state", publicState());
   });
 
@@ -268,8 +303,17 @@ function endAuction(){
 
   if (bids.length > 0) {
     bids.sort((a, b) => b.bid - a.bid);
-    if (bids.length > 1 && bids[0].bid === bids[1].bid) {
+    const topBid = bids[0].bid;
+    const tied = bids.filter(b => b.bid === topBid);
+
+    if (tied.length > 1) {
       tie = true;
+      const splitToken = 1 / tied.length;
+      tied.forEach(t => {
+        if (game.players[t.id]) {
+          game.players[t.id].tokens += splitToken;
+        }
+      });
     } else {
       winner = bids[0].id;
       game.players[winner].tokens += 1;
@@ -301,6 +345,11 @@ function publicState(showTimes=false){
   return {
     phase: game.phase,
     round: game.round,
+    totalRounds: game.totalRounds,
+    settings: {
+      totalRounds: game.settings.totalRounds,
+      gameDurationMinutes: game.settings.gameDurationMinutes
+    },
     players: Object.values(game.players).map(p=>({
       id: p.id,
       name: p.name,
